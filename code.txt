@@ -1,0 +1,260 @@
+library(scales)
+library(circlize)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(readr)
+library(stringr)
+library(tibble)
+library(patchwork)
+library(grid)
+
+# ==============================================================================
+# 1. CARREGAMENTO DOS DADOS E REGRAS DE SUCESSO (2023-2026)
+# ==============================================================================
+dados_brutos <- read_csv("steamdb_2023_2026_completo.csv", show_col_types = FALSE)
+
+if (!"ano" %in% names(dados_brutos)) {
+  if ("year" %in% names(dados_brutos)) {
+    dados_brutos$ano <- dados_brutos$year
+  } else {
+    dados_brutos$ano <- rep(2023:2026, each = 100)[1:nrow(dados_brutos)]
+  }
+}
+
+dados <- dados_brutos %>%
+  filter(!is.na(peak)) %>%
+  mutate(
+    type_label = factor(
+      type,
+      levels = c(1, 3, 2),
+      labels = c("Singleplayer", "Ambos", "Multiplayer")
+    ),
+    sucesso = case_when(
+      type == 2 ~ peak > 70000,
+      TRUE      ~ peak > 40000
+    )
+  )
+
+sucessos <- dados %>% filter(sucesso == TRUE)
+dados_preco <- subset(dados, !is.na(price))
+
+cores_tipo <- c(
+  "Singleplayer" = "#1d3557",
+  "Ambos"        = "#2a9d8f",
+  "Multiplayer"  = "#e63946"
+)
+
+tema_prancha <- theme_minimal(base_size = 11.5) +
+  theme(
+    plot.background     = element_rect(fill = "white", color = NA),
+    panel.background    = element_rect(fill = "white", color = NA),
+    plot.title.position = "plot",
+    plot.title          = element_text(face = "bold", size = 11.5, color = "#1d3557", hjust = 0.5, margin = margin(b = 6)),
+    plot.subtitle       = element_text(size = 9.5, color = "#444444", hjust = 0.5, margin = margin(b = 6)),
+    axis.title.x        = element_text(face = "bold", size = 10.5, color = "#222222", margin = margin(t = 6)),
+    axis.title.y        = element_text(face = "bold", size = 10.5, color = "#222222", margin = margin(r = 8), lineheight = 1.05),
+    axis.text           = element_text(size = 9.5, color = "#333333"),
+    legend.title        = element_text(face = "bold", size = 10.5, color = "#1d3557"),
+    legend.text         = element_text(size = 10.0, color = "#222222"),
+    panel.grid.minor    = element_blank(),
+    panel.grid.major    = element_line(color = "#cccccc", linetype = "dashed", linewidth = 0.65),
+    plot.margin         = margin(t = 8, r = 28, b = 8, l = 10)
+  )
+
+
+# --- 1A: Barras de Sucesso por Modo ---
+df_tipo_suc <- sucessos %>%
+  count(type_label) %>%
+  mutate(pct = n / sum(n) * 100, rotulo = paste0(n, "\n(", round(pct, 0), "%)"))
+
+p1a <- ggplot(df_tipo_suc, aes(x = reorder(type_label, -n), y = n, fill = type_label)) +
+  geom_col(width = 0.55, show.legend = FALSE) +
+  geom_text(aes(label = rotulo), vjust = -0.2, size = 3.2, fontface = "bold", color = "#1d3557", lineheight = 0.9) +
+  scale_fill_manual(values = cores_tipo) +
+  scale_x_discrete(expand = expansion(mult = c(0.22, 0.28))) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.35))) +
+  coord_cartesian(clip = "off") +
+  labs(title = "1A.Sucessos por Modo", x = NULL, y = "Jogos\nde Sucesso") +
+  tema_prancha +
+  theme(
+    panel.grid.major.x = element_blank(), axis.text.x = element_text(size = 8.8, face = "bold", angle = 30, hjust = 1),
+        plot.title = element_text(face = "bold", size = 11.5, color = "#1d3557", hjust = 0.30, margin = margin(b = 6)))
+
+df_tempo <- sucessos %>% count(ano, type_label, .drop = FALSE)
+
+p1b <- ggplot(df_tempo, aes(x = factor(ano), y = n, color = type_label, group = type_label)) +
+  geom_line(linewidth = 1.1) +
+  geom_point(size = 2.6) +
+  
+  scale_color_manual(values = cores_tipo, name = "Modo:") +
+  scale_x_discrete(expand = expansion(mult = c(0.12, 0.25))) +
+  scale_y_continuous(expand = expansion(mult = c(0.10, 0.28))) +
+  coord_cartesian(clip = "off") +
+  labs(title = "1B. Estabilidade (2023–2026)", x = NULL, y = "Hits / Ano") +
+  tema_prancha +
+  theme(legend.position = "bottom", legend.margin = margin(t = -2))
+
+tags_excluir <- c(
+  "singleplayer", "multiplayer", "online co-op", "local co-op", "co-op",
+  "co-op campaign", "local multiplayer", "asynchronous multiplayer",
+  "pvp", "pve", "pvpve", "free to play", "mmo", "mmorpg"
+)
+
+tags_sucesso <- sucessos %>%
+  mutate(tipo_curto = factor(type, levels = c(1, 3, 2), labels = c("Singleplayer", "Ambos", "Multiplayer"))) %>%
+  separate_rows(tags, sep = ",\\s*") %>%
+  mutate(tags = str_trim(tags)) %>%
+  filter(!tags %in% tags_excluir)
+
+top10_tags_df <- tags_sucesso %>% count(tags, sort = TRUE) %>% slice_head(n = 10)
+
+p1c <- ggplot(top10_tags_df, aes(x = n, y = reorder(tags, n))) +
+  geom_col(fill = "#457b9d", width = 0.68) +
+  geom_text(aes(label = n), hjust = -0.25, size = 3.4, fontface = "bold", color = "#1d3557") +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.28))) +
+  coord_cartesian(clip = "off") +
+  labs(title = "1C. Top 10 Gêneros nos Jogos de Sucesso", x = "Frequência nos Hits (n = 157)", y = NULL) +
+  tema_prancha +
+  theme(panel.grid.major.y = element_blank(), axis.text.y = element_text(face = "bold", size = 9.2))
+
+matriz_cordas <- tags_sucesso %>%
+  filter(tags %in% top10_tags_df$tags) %>%
+  count(tipo_curto, tags) %>%
+  pivot_wider(names_from = tags, values_from = n, values_fill = 0) %>%
+  column_to_rownames("tipo_curto") %>%
+  as.matrix()
+
+resumo_preco <- dados_preco %>%
+  group_by(type_label) %>%
+  summarise(mediana = median(price), media = mean(price), q75 = quantile(price, 0.75), .groups = "drop")
+
+p3_box <- ggplot(dados_preco, aes(x = type_label, y = price, fill = type_label, color = type_label)) +
+  geom_boxplot(width = 0.45, alpha = 0.25, outlier.size = 1.5, outlier.alpha = 0.35, linewidth = 0.8) +
+  stat_summary(fun = mean, geom = "point", shape = 18, size = 4.0, color = "#111111", show.legend = FALSE) +
+  geom_label(
+    data = resumo_preco,
+    aes(x = type_label, y = q75 + 36, label = paste0("Mediana: R$ ", round(mediana, 0), "\nMédia: R$ ", round(media, 0))),
+    inherit.aes = FALSE, size = 3.1, fontface = "bold", color = "#1d3557",
+    fill = "#ffffffcc", label.size = 0, lineheight = 0.92
+  ) +
+  scale_fill_manual(values = cores_tipo) +
+  scale_color_manual(values = cores_tipo) +
+  scale_y_continuous(labels = label_dollar(prefix = "R$ ", big.mark = ".", decimal.mark = ","), expand = expansion(mult = c(0.04, 0.18))) +
+  coord_cartesian(clip = "off") +
+  labs(
+    subtitle = "Traço = Mediana | Caixa = Quartis (25%–75%) | Losango = Média",
+    x = NULL, y = "Preço Base de Lançamento (R$)"
+  ) +
+  tema_prancha +
+  theme(legend.position = "none", panel.grid.major.x = element_blank(), axis.text.x = element_text(face = "bold", size = 10))
+
+# ==============================================================================
+# 5. BLOCO 4: GRÁFICO DE BOLHAS
+# ==============================================================================
+p4_bolhas <- ggplot(dados_preco, aes(x = price, y = peak, size = follows, color = type_label)) +
+  geom_point(alpha = 0.72) +
+  geom_hline(yintercept = 70000, color = "#e63946", linetype = "solid", linewidth = 0.90) +
+  geom_hline(yintercept = 40000, color = "#1d3557", linetype = "solid", linewidth = 0.90) +
+  geom_vline(xintercept = 23.99, color = "#e63946", linetype = "dotted", linewidth = 0.90) +
+  geom_vline(xintercept = 149.00, color = "#1d3557", linetype = "dotted", linewidth = 0.90) +
+  
+  # CAIXAS DAS METAS: Puxadas totalmente para a direita (x = Inf) e bem mais transparentes (#ffffff80)
+  annotate(
+    "label", x = Inf, y = 86000, label = "Meta Multiplayer (> 70k CCU)",
+    color = "#e63946", size = 3.2, hjust = 1.02, fontface = "bold",
+    label.size = 0, label.padding = unit(0.15, "lines"), fill = "#ffffff80"
+  ) +
+  annotate(
+    "label", x = Inf, y = 30000, label = "Meta Single/Ambos (> 40k CCU)",
+    color = "#1d3557", size = 3.2, hjust = 1.02, fontface = "bold",
+    label.size = 0, label.padding = unit(0.15, "lines"), fill = "#ffffff80"
+  ) +
+  
+  # CAIXAS DAS MEDIANAS DE PREÇO: Compactas e transparentes
+  annotate(
+    "label", x = 26, y = 2400000, label = "Mediana Multi\n(R$ 23,99)",
+    color = "#e63946", size = 3.0, hjust = 0, vjust = 1, fontface = "bold",
+    lineheight = 0.9, label.size = 0, label.padding = unit(0.12, "lines"), fill = "#ffffff88"
+  ) +
+  annotate(
+    "label", x = 152, y = 1350, label = "Mediana Single/Ambos\n(R$ 149,00)",
+    color = "#1d3557", size = 3.0, hjust = 0, vjust = 0, fontface = "bold",
+    lineheight = 0.9, label.size = 0, label.padding = unit(0.12, "lines"), fill = "#ffffff88"
+  ) +
+  
+  # CAIXINHA DA CORRELAÇÃO: Cravada no canto superior direito (x = Inf, y = Inf)
+  annotate(
+    "label", x = Inf, y = Inf,
+    label = "Hype x Pico (Correlação Log10 r = 0,74):\nBolhas maiores concentram-se acima das metas\n(Mediana: 175,4k seguidores nos hits vs. 91,7k)",
+    color = "#1d3557", size = 3.1, hjust = 1.02, vjust = 1.12, fontface = "bold",
+    lineheight = 0.98, label.size = 0.3, fill = "#f1faeecc"
+  ) +
+  
+  scale_y_log10(
+    labels = label_number(scale_cut = cut_short_scale()),
+    expand = expansion(mult = c(0.06, 0.14))
+  ) +
+  
+  scale_x_continuous(
+    labels = label_dollar(prefix = "R$ ", big.mark = ".", decimal.mark = ","),
+    expand = expansion(mult = c(0.03, 0.14))
+  ) +
+  scale_color_manual(
+    values = cores_tipo, name = "Modo (Cor):",
+    guide = guide_legend(nrow = 1, override.aes = list(size = 4.2, alpha = 0.95), order = 1)
+  ) +
+  scale_size_continuous(
+    range = c(1.8, 10.5), breaks = c(1e5, 2.5e5, 5e5, 1e6),
+    labels = c("100k", "250k", "500k", "1M+"), name = "Seguidores(Tamanho):",
+    guide = guide_legend(nrow = 1, override.aes = list(color = "#555555", alpha = 0.75), order = 2)
+  ) +
+  labs(
+    x = "Preço Base de Lançamento (R$)",
+    y = "Pico de Jogadores\nSimultâneos — Peak CCU (Log10)"
+  ) +
+  tema_prancha +
+  theme(
+    legend.position      = "top",
+    legend.justification = "center",
+    legend.direction     = "horizontal",
+    legend.box           = "horizontal",
+    legend.box.spacing   = unit(10, "pt"),
+    legend.margin        = margin(t = 2, r = 0, b = 4, l = 0),
+    plot.margin          = margin(t = 10, r = 24, b = 8, l = 14)
+  )
+
+# ==============================================================================
+# 6. EXPORTAÇÃO DOS ARQUIVOS VETORIAIS INDIVIDUAIS (.SVG E .PDF) PARA O CANVA
+# ==============================================================================
+
+svg("canva_1A_barras_modo.svg", width = 5.2, height = 3.6, bg = "transparent"); print(p1a); dev.off()
+svg("canva_1B_tempo_modo.svg", width = 5.4, height = 3.6, bg = "transparent"); print(p1b); dev.off()
+svg("canva_1C_top10_generos.svg", width = 7.2, height = 4.4, bg = "transparent"); print(p1c); dev.off()
+
+bloco1_combinado <- (p1a | p1b) / p1c +
+  plot_annotation(
+    title = "1. Quais formatos e gêneros lideram os sucessos — e isso é estável no tempo?",
+    theme = theme(
+      plot.title  = element_text(face = "bold", size = 14.5, color = "#1d3557", hjust = 0.5),
+      plot.margin = margin(t = 10, r = 24, b = 10, l = 12)
+    )
+  )
+svg("canva_BLOCO1_completo.svg", width = 9.6, height = 7.4, bg = "transparent")
+print(bloco1_combinado)
+dev.off()
+ggsave("canva_BLOCO1_completo.pdf", bloco1_combinado, width = 9.6, height = 7.4, device = cairo_pdf)
+
+# Bloco 3 (Box-plot):
+svg("canva_BLOCO3_boxplot_preco.svg", width = 6.2, height = 5.4, bg = "transparent"); print(p3_box); dev.off()
+ggsave("canva_BLOCO3_boxplot_preco.pdf", p3_box, width = 6.2, height = 5.4, device = cairo_pdf)
+
+# Bloco 4 (Gráfico de Bolhas):
+p4_bolhas_com_titulo <- p4_bolhas +
+  labs(title = "4. Síntese Multivariada: Como Preço, Hype (Seguidores) e Modo de Jogo determinam o Pico (Peak CCU)?")
+
+svg("canva_BLOCO4_bolhas_destaque.svg", width = 10.8, height = 5.6, bg = "transparent")
+print(p4_bolhas_com_titulo)
+dev.off()
+ggsave("canva_BLOCO4_bolhas_destaque.pdf", p4_bolhas_com_titulo, width = 10.8, height = 5.6, device = cairo_pdf)
+ggsave("canva_BLOCO4_bolhas_destaque.png", p4_bolhas_com_titulo, width = 10.8, height = 5.6, dpi = 300)
